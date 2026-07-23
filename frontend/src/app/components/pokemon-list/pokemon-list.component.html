@@ -1,0 +1,63 @@
+<div class="page">
+  <header class="page-header">
+    <h1>&#x1F3AE; Pokédex</h1>
+    <span class="total" *ngIf="total() > 0">{{ total() }} Pokémon</span>
+  </header>
+
+  <div class="loading" *ngIf="loading()">
+    <div class="spinner"></div>
+    <p>Loading Pokémon…</p>
+  </div>
+
+  <div class="error" *ngIf="error()">
+    <p>{{ error() }}</p>
+    <button (click)="load()">Retry</button>
+  </div>
+
+  <div class="table-wrapper" *ngIf="!loading() && !error()">
+    <table>
+      <thead>
+        <tr>
+          <th *ngFor="let col of columns"
+              (click)="sort(col.field)"
+              [class.active]="sortField() === col.field"
+              [class.asc]="sortField() === col.field && sortDir() === 'asc'"
+              [class.desc]="sortField() === col.field && sortDir() === 'desc'">
+            {{ col.label }}
+            <span class="sort-icon">
+              {{ sortField() === col.field ? (sortDir() === 'asc' ? '▲' : '▼') : '⇅' }}
+            </span>
+          </th>
+          <th>Types</th>
+          <th>Sprite</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let p of sorted()" (click)="viewDetail(p)" class="pokemon-row">
+          <td class="id-cell">#{{ p.id }}</td>
+          <td class="name-cell">{{ p.name }}</td>
+          <td>{{ p.height / 10 }} m</td>
+          <td>{{ p.weight / 10 }} kg</td>
+          <td>{{ p.base_experience ?? '—' }}</td>
+          <td class="types-cell">
+            <span *ngFor="let t of p.types"
+                  class="type-badge"
+                  [style.background]="typeColor(t.type.name)">
+              {{ t.type.name }}
+            </span>
+          </td>
+          <td class="sprite-cell">
+            <img [src]="p.sprites.front_default" [alt]="p.name" width="48" height="48"
+                 *ngIf="p.sprites.front_default" />
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination" *ngIf="!loading() && !error() && totalPages() > 1">
+    <button (click)="prevPage()" [disabled]="offset() === 0">&#8592; Prev</button>
+    <span>Page {{ currentPage() }} / {{ totalPages() }}</span>
+    <button (click)="nextPage()" [disabled]="offset() + pageSize >= total()">Next &#8594;</button>
+  </div>
+</div>

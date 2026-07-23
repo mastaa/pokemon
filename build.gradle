@@ -1,0 +1,48 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.0'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'pl.org.opi.pokemon'
+version = '0.0.1-SNAPSHOT'
+description = 'poke'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+def frontendDir = "$projectDir/frontend"
+
+task npmInstall(type: Exec) {
+    workingDir frontendDir
+    inputs.file "$frontendDir/package.json"
+    outputs.dir "$frontendDir/node_modules"
+    commandLine 'npm', 'install'
+}
+
+task buildFrontend(type: Exec, dependsOn: npmInstall) {
+    workingDir frontendDir
+    inputs.dir "$frontendDir/src"
+    inputs.file "$frontendDir/angular.json"
+    outputs.dir "$projectDir/src/main/resources/static"
+    commandLine 'npx', 'ng', 'build'
+}
+
+processResources.dependsOn buildFrontend

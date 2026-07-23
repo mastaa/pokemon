@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: poke
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    deserialization:
+      FAIL_ON_NULL_FOR_PRIMITIVES: false
+      FAIL_ON_UNKNOWN_PROPERTIES: false
+
+pokeapi:
+  base-url: https://pokeapi.co
