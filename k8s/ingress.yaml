@@ -1,0 +1,39 @@
+# =============================================================================
+# Etap 7: Ingress – wystawienie aplikacji na świat przez Traefik.
+# Ingress = reguły routingu HTTP(S) (host/ścieżka -> Service).
+# Ingress Controller (tu: Traefik, wbudowany w k3s/k3d) te reguły realizuje.
+#
+#   Internet ──► LoadBalancer Traefik :80/:443 ──► Ingress (host: poke.localhost)
+#                                                     └──► Service poke:80 ──► Pody
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: poke
+  namespace: poke
+  labels:
+    app.kubernetes.io/name: poke
+  annotations:
+    # Traefik: na którym entrypoincie nasłuchiwać ("web" = :80, "websecure" = :443)
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    # Podpięcie middleware'u (format: <namespace>-<nazwa>@kubernetescrd)
+    traefik.ingress.kubernetes.io/router.middlewares: poke-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik          # który Ingress Controller obsługuje ten Ingress
+  rules:
+    # *.localhost rozwiązuje się na 127.0.0.1 – nie trzeba edytować /etc/hosts.
+    # Na produkcji: prawdziwa domena z rekordem DNS wskazującym na IP Traefika.
+    - host: poke.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: poke
+                port:
+                  name: http
+  # --- HTTPS (produkcja) – np. cert-manager + Let's Encrypt ---
+  # tls:
+  #   - hosts: [poke.example.com]
+  #     secretName: poke-tls           # Secret typu kubernetes.io/tls

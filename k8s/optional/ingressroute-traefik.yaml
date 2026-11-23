@@ -1,0 +1,45 @@
+# =============================================================================
+# (Opcjonalnie) Etap 7b: ten sam routing natywnym CRD Traefika – IngressRoute.
+# Zamiast standardowego Ingress + adnotacji: pełne możliwości Traefika
+# (reguły Host/PathPrefix/Headers, wagi, middleware'y, TLS z certResolver).
+#
+# Nie stosuj razem z k8s/ingress.yaml na tym samym hoście – wybierz jedno:
+#   kubectl delete -f k8s/ingress.yaml
+#   kubectl apply  -f k8s/optional/ingressroute-traefik.yaml
+# =============================================================================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: poke
+  namespace: poke
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`poke.localhost`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+      services:
+        - name: poke
+          port: http
+    # Przykład: tylko API pod osobnym hostem, z limitem żądań
+    - match: Host(`api.poke.localhost`) && PathPrefix(`/api`)
+      kind: Rule
+      middlewares:
+        - name: rate-limit
+      services:
+        - name: poke
+          port: http
+  # tls:
+  #   certResolver: letsencrypt        # wymaga konfiguracji resolvera w Traefiku
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: poke
+spec:
+  rateLimit:
+    average: 5      # żądań/s
+    burst: 10
