@@ -1,0 +1,8 @@
+# Namespace = logiczna "przestrzeń" w klastrze. Izoluje nazwy zasobów,
+# ułatwia sprzątanie (kubectl delete ns poke) i nadawanie uprawnień.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: poke
+  labels:
+    app.kubernetes.io/part-of: pokedex-workshop
