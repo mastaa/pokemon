@@ -1,0 +1,25 @@
+# =============================================================================
+# Etap 5: Service – stały adres (DNS + wirtualne IP) dla zmieniającego się
+# zbioru Podów. Ruch jest rozkładany (load balancing) na Pody GOTOWE (readiness).
+#
+# DNS w klastrze:  poke                     (z tego samego namespace)
+#                  poke.poke.svc.cluster.local (pełna nazwa)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: poke
+  namespace: poke
+  labels:
+    app.kubernetes.io/name: poke
+spec:
+  # ClusterIP (domyślny) – dostępny tylko wewnątrz klastra.
+  # Inne typy: NodePort (port 30000-32767 na każdym węźle), LoadBalancer (zewnętrzne IP od chmury).
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: poke   # do których Podów kierować ruch (po etykietach!)
+  ports:
+    - name: http
+      port: 80                      # port Service'u
+      targetPort: http              # port kontenera (nazwa z Deployment -> 8080)
+      protocol: TCP
