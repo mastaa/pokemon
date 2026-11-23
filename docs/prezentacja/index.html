@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes od zera – warsztat na przykładzie Pokédexu</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
+    --accent: #facc15; --blue: #60a5fa; --red: #f87171; --green: #4ade80; --code: #0b1220;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
+  .slide { position: absolute; inset: 0; padding: 5vh 7vw; display: none; flex-direction: column;
+    justify-content: flex-start; }
+  .slide.active { display: flex; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .slide.center { justify-content: center; align-items: center; text-align: center; }
+  h1 { font-size: 3.4vw; color: var(--accent); margin-bottom: 2vh; }
+  h2 { font-size: 2.5vw; color: var(--accent); margin-bottom: 2.5vh; border-bottom: 2px solid #334155; padding-bottom: 1vh; }
+  h3 { font-size: 1.6vw; color: var(--blue); margin: 1.5vh 0 1vh; }
+  p, li { font-size: 1.45vw; line-height: 1.5; }
+  ul, ol { margin-left: 2.2vw; } li { margin: .6vh 0; }
+  .muted { color: var(--muted); }
+  .tag { display: inline-block; background: var(--accent); color: #111; font-weight: 700; border-radius: 6px;
+    padding: .3vh .8vw; font-size: 1.1vw; margin-bottom: 1.5vh; letter-spacing: .05em; }
+  code { font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; color: var(--accent); font-size: .92em; }
+  pre { background: var(--code); border: 1px solid #334155; border-radius: 10px; padding: 1.6vh 1.4vw;
+    font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; font-size: 1.05vw; line-height: 1.45;
+    overflow: auto; color: #cbd5e1; white-space: pre; }
+  pre .k { color: var(--blue); } pre .c { color: #64748b; font-style: italic; } pre .v { color: var(--green); }
+  pre .h { color: var(--accent); font-weight: 700; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5vw; align-items: start; }
+  .cols.c64 { grid-template-columns: 1.4fr 1fr; }
+  .box { background: var(--panel); border-radius: 12px; padding: 2vh 1.5vw; border-left: 5px solid var(--blue); }
+  .box.warn { border-left-color: var(--red); } .box.ok { border-left-color: var(--green); }
+  .box.acc { border-left-color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: 1.3vw; }
+  th, td { border-bottom: 1px solid #334155; padding: 1vh .8vw; text-align: left; vertical-align: top; }
+  th { color: var(--accent); }
+  .big { font-size: 5vw; } .pokeball { font-size: 8vw; margin-bottom: 2vh; }
+  .agenda li { font-size: 1.7vw; } .agenda b { color: var(--accent); }
+  #progress { position: fixed; left: 0; bottom: 0; height: 5px; background: var(--accent); transition: width .2s; }
+  #counter { position: fixed; right: 1.5vw; bottom: 1.5vh; color: var(--muted); font-size: 1vw; }
+  #hint { position: fixed; left: 1.5vw; bottom: 1.5vh; color: #475569; font-size: .9vw; }
+  .flow { font-family: Menlo, Consolas, monospace; font-size: 1.15vw; }
+  @media print {
+    html, body { overflow: visible; height: auto; }
+    .slide { display: flex !important; position: relative; height: 100vh; page-break-after: always; animation: none; }
+    #progress, #counter, #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================ WSTĘP ============================ -->
+<section class="slide center">
+  <div class="pokeball">⚪🔴</div>
+  <h1>Kubernetes od zera</h1>
+  <p style="font-size:2vw">Warsztat: od <code>Dockerfile</code> do <code>Ingress</code> na przykładzie aplikacji <b>Pokédex</b></p>
+  <p class="muted" style="margin-top:4vh">Spring Boot 4 · Angular · Docker · Kubernetes · Traefik</p>
+</section>
+
+<section class="slide">
+  <h2>Agenda</h2>
+  <ol class="agenda">
+    <li><b>Dockerfile</b> – budujemy obraz, który trafi do Poda</li>
+    <li><b>Deployment</b> – uruchamiamy aplikację w klastrze</li>
+    <li><b>ConfigMap</b> – konfiguracja poza obrazem</li>
+    <li><b>Secret</b> – dane wrażliwe</li>
+    <li><b>Service</b> – stały adres i load balancing</li>
+    <li><b>Port-forward</b> – testujemy lokalnie</li>
+    <li><b>Ingress + Traefik</b> – wystawiamy aplikację na świat</li>
+  </ol>
+  <p class="muted" style="margin-top:3vh">Każdy etap = osobny branch: <code>k8s/01-dockerfile</code> … <code>k8s/07-ingress-traefik</code></p>
+</section>
+
+<section class="slide">
+  <h2>Nasza aplikacja: Pokédex</h2>
+  <div class="cols c64">
+    <pre class="flow">
+  Przeglądarka
+      │
+      ▼
+┌──────────────────────────────┐
+│  Spring Boot (WebFlux) :8080 │
+│  ├─ /           Angular SPA  │
+│  ├─ /api/pokemon REST API    │
+│  ├─ /api/info   (warsztat)   │
+│  ├─ /actuator/health/*       │
+│  └─ /swagger-ui.html         │
+└──────────────┬───────────────┘
+               │ WebClient
+               ▼
+        https://pokeapi.co</pre>
+    <div>
+      <div class="box">
+        <p>Jeden artefakt: <b>fat-jar</b> z wbudowanym frontendem.</p>
+        <p>Brak bazy danych – źródłem danych jest publiczne PokéAPI.</p>
+      </div>
+      <div class="box acc" style="margin-top:2vh">
+        <p><code>/api/info</code> pokaże nam: nazwę Poda, wartości z ConfigMap i (zamaskowany) Secret.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Czym jest Kubernetes?</h2>
+  <div class="cols">
+    <div>
+      <p><b>Orkiestrator kontenerów</b> – uruchamia, skaluje, naprawia i łączy kontenery na wielu maszynach.</p>
+      <ul>
+        <li>samonaprawianie (restart, przeniesienie)</li>
+        <li>skalowanie poziome</li>
+        <li>rolling update i rollback</li>
+        <li>service discovery i load balancing</li>
+        <li>zarządzanie konfiguracją i sekretami</li>
+      </ul>
+    </div>
+    <div class="box acc">
+      <h3>Model deklaratywny</h3>
+      <p>Nie mówimy <i>„uruchom 2 kontenery”</i>.<br>Mówimy <b>„ma działać 2 kontenery”</b>.</p>
+      <p style="margin-top:1.5vh">Kontrolery w pętli porównują <b>stan pożądany</b> (YAML) ze <b>stanem faktycznym</b> i niwelują różnicę.</p>
+      <p style="margin-top:1.5vh"><code>kubectl apply -f plik.yaml</code></p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Architektura klastra</h2>
+  <pre class="flow">
+ kubectl ───► ┌──────────────── Control plane ─────────────────┐
+              │  kube-apiserver  ◄──►  etcd (stan klastra)     │
+              │  scheduler (gdzie uruchomić Pod)               │
+              │  controller-manager (Deployment, ReplicaSet…)  │
+              └───────────────────────┬────────────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────────┐
+          ▼                           ▼                           ▼
+   ┌─ Node 1 ──────────┐       ┌─ Node 2 ──────────┐       ┌─ Node 3 ──────────┐
+   │ kubelet           │       │ kubelet           │       │ kubelet           │
+   │ kube-proxy        │       │ kube-proxy        │       │ kube-proxy        │
+   │ containerd        │       │ containerd        │       │ containerd        │
+   │ [Pod] [Pod]       │       │ [Pod]             │       │ [Pod] [Pod] [Pod] │
+   └───────────────────┘       └───────────────────┘       └───────────────────┘</pre>
+</section>
+
+<section class="slide">
+  <h2>Środowisko warsztatu</h2>
+  <div class="cols">
+    <div>
+      <h3>Potrzebujemy</h3>
+      <ul><li>Docker</li><li><code>kubectl</code></li><li><b>k3d</b> – k3s w Dockerze, z wbudowanym <b>Traefikiem</b></li></ul>
+      <h3>Etap 0 – przygotowanie aplikacji</h3>
+      <ul>
+        <li>Actuator: <code>/actuator/health/liveness|readiness</code></li>
+        <li>konfiguracja ze zmiennych środowiskowych</li>
+        <li>graceful shutdown</li>
+      </ul>
+    </div>
+    <pre><span class="c"># klaster z portem 8081 -> Traefik :80</span>
+k3d cluster create workshop \
+  -p "8081:80@loadbalancer" --agents 1
+
+kubectl cluster-info
+kubectl get nodes -o wide
+
+<span class="c"># branch startowy</span>
+git checkout k8s/00-start</pre>
+  </div>
+</section>
+
+<!-- ============================ ETAP 1 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 1</span>
+  <div class="big">🐳</div>
+  <h1>Dockerfile</h1>
+  <p class="muted">branch <code>k8s/01-dockerfile</code></p>
+</section>
+
+<section class="slide">
+  <h2>Obraz → Kontener → Pod</h2>
+  <div class="cols">
+    <div>
+      <ul>
+        <li><b>Obraz</b> – niezmienny szablon: system + runtime + aplikacja</li>
+        <li><b>Kontener</b> – uruchomiona instancja obrazu</li>
+        <li><b>Pod</b> – najmniejsza jednostka K8s: 1..N kontenerów ze wspólną siecią (IP) i wolumenami</li>
+      </ul>
+      <div class="box warn" style="margin-top:2vh">
+        <p>Kubernetes nie uruchamia jarów ani kodu – uruchamia <b>kontenery z obrazów</b>.</p>
+      </div>
+    </div>
+    <pre class="flow">
+ Dockerfile
+     │ docker build
+     ▼
+ obraz poke:1.0.0
+     │ k3d image import / docker push
+     ▼
+ ┌─────── Pod ───────┐
+ │ IP: 10.42.0.5     │
+ │ ┌───────────────┐ │
+ │ │ kontener poke │ │
+ │ │    :8080      │ │
+ │ └───────────────┘ │
+ └───────────────────┘</pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Dockerfile – build wieloetapowy</h2>
+  <pre><span class="c"># ---------- 1) FRONTEND ----------</span>
+<span class="k">FROM</span> node:24-alpine <span class="k">AS</span> frontend
+<span class="k">WORKDIR</span> /workspace/frontend
+<span class="k">COPY</span> frontend/package.json frontend/package-lock.json ./
+<span class="k">RUN</span> npm install --no-audit --no-fund            <span class="c"># warstwa cache'owana</span>
+<span class="k">COPY</span> frontend/ ./
+<span class="k">RUN</span> npx ng build                                 <span class="c"># -> ../src/main/resources/static</span>
+
+<span class="c"># ---------- 2) BACKEND ----------</span>
+<span class="k">FROM</span> eclipse-temurin:25-jdk <span class="k">AS</span> backend
+<span class="k">WORKDIR</span> /workspace
+<span class="k">COPY</span> gradlew settings.gradle build.gradle ./
+<span class="k">COPY</span> gradle/ gradle/
+<span class="k">RUN</span> ./gradlew --no-daemon dependencies > /dev/null
+<span class="k">COPY</span> src/ src/
+<span class="k">COPY</span> --from=frontend /workspace/src/main/resources/static/ src/main/resources/static/
+<span class="k">RUN</span> ./gradlew --no-daemon bootJar -x npmInstall -x buildFrontend && cp build/libs/*-SNAPSHOT.jar app.jar
+
+<span class="c"># ---------- 3) RUNTIME ----------</span>
+<span class="k">FROM</span> eclipse-temurin:25-jre-alpine
+<span class="k">RUN</span> addgroup -S -g 1000 app && adduser -S -u 1000 -G app app
+<span class="k">COPY</span> --from=backend --chown=app:app /workspace/app.jar /app/app.jar
+<span class="k">USER</span> 1000:1000
+<span class="k">ENV</span> JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
+<span class="k">EXPOSE</span> 8080
+<span class="k">ENTRYPOINT</span> ["java", "-jar", "/app/app.jar"]</pre>
+</section>
+
+<section class="slide">
+  <h2>Budowanie i dobre praktyki</h2>
+  <div class="cols">
+    <pre><span class="h">docker build -t poke:1.0.0 .</span>
+docker images poke
+
+<span class="c"># test lokalny</span>
+docker run --rm -p 8080:8080 \
+  -e APP_ENVIRONMENT=docker poke:1.0.0
+curl localhost:8080/api/info
+
+<span class="c"># obraz do klastra</span>
+<span class="h">k3d image import poke:1.0.0 -c workshop</span>
+<span class="c"># kind load docker-image poke:1.0.0</span>
+<span class="c"># minikube image load poke:1.0.0</span></pre>
+    <div>
+      <ul>
+        <li><b>multi-stage</b> – w obrazie nie ma Node, Gradle, JDK</li>
+        <li><b>kolejność warstw</b> – zależności przed kodem</li>
+        <li><b>non-root</b> – <code>USER 1000</code></li>
+        <li><b><code>.dockerignore</code></b> – bez <code>node_modules</code>, <code>.git</code>, <code>build/</code></li>
+        <li><b>JVM w kontenerze</b> – <code>MaxRAMPercentage</code></li>
+        <li><b>konkretny tag</b>, nie <code>latest</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ETAP 2 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 2</span>
+  <div class="big">🚀</div>
+  <h1>Deployment</h1>
+  <p class="muted">branch <code>k8s/02-deployment</code> · <code>k8s/00-namespace.yaml</code>, <code>k8s/deployment.yaml</code></p>
+</section>
+
+<section class="slide">
+  <h2>Anatomia każdego manifestu</h2>
+  <div class="cols">
+    <pre><span class="k">apiVersion:</span> apps/v1        <span class="c"># grupa/wersja API</span>
+<span class="k">kind:</span> Deployment           <span class="c"># typ obiektu</span>
+<span class="k">metadata:</span>                  <span class="c"># kto to jest</span>
+  <span class="k">name:</span> poke
+  <span class="k">namespace:</span> poke
+  <span class="k">labels:</span>
+    app.kubernetes.io/name: poke
+<span class="k">spec:</span>                      <span class="c"># czego chcemy</span>
+  ...
+<span class="c"># status:                  <- wypełnia K8s</span></pre>
+    <div>
+      <pre class="flow">
+Deployment  "chcę 2 Pody poke:1.0.0"
+  └── ReplicaSet  (wersja szablonu)
+        ├── Pod poke-66c7f4fc4f-ft5xv
+        └── Pod poke-66c7f4fc4f-hfkbw</pre>
+      <div class="box" style="margin-top:2vh">
+        <p><b>Namespace</b> – logiczna izolacja nazw, uprawnień i łatwe sprzątanie:<br><code>kubectl delete ns poke</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>deployment.yaml</h2>
+  <div class="cols">
+    <pre><span class="k">spec:</span>
+  <span class="k">replicas:</span> <span class="v">2</span>
+  <span class="k">selector:</span>
+    <span class="k">matchLabels:</span>
+      <span class="h">app.kubernetes.io/name: poke</span>
+  <span class="k">strategy:</span>
+    <span class="k">type:</span> RollingUpdate
+    <span class="k">rollingUpdate:</span> { maxSurge: 1, maxUnavailable: 0 }
+  <span class="k">template:</span>
+    <span class="k">metadata:</span>
+      <span class="k">labels:</span>
+        <span class="h">app.kubernetes.io/name: poke</span>  <span class="c"># = selector!</span>
+    <span class="k">spec:</span>
+      <span class="k">securityContext:</span> { runAsNonRoot: true, runAsUser: 1000 }
+      <span class="k">containers:</span>
+        - <span class="k">name:</span> poke
+          <span class="k">image:</span> <span class="v">poke:1.0.0</span>
+          <span class="k">imagePullPolicy:</span> IfNotPresent
+          <span class="k">ports:</span>
+            - { name: http, containerPort: 8080 }</pre>
+    <pre>          <span class="k">resources:</span>
+            <span class="k">requests:</span> { cpu: 250m, memory: 384Mi }
+            <span class="k">limits:</span>   { memory: 512Mi }
+          <span class="k">startupProbe:</span>
+            <span class="k">httpGet:</span>
+              { path: /actuator/health/liveness, port: http }
+            <span class="k">periodSeconds:</span> 2
+            <span class="k">failureThreshold:</span> 30
+          <span class="k">livenessProbe:</span>
+            <span class="k">httpGet:</span>
+              { path: /actuator/health/liveness, port: http }
+            <span class="k">periodSeconds:</span> 10
+          <span class="k">readinessProbe:</span>
+            <span class="k">httpGet:</span>
+              { path: /actuator/health/readiness, port: http }
+            <span class="k">periodSeconds:</span> 5</pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Probe'y i zasoby</h2>
+  <table>
+    <tr><th>Element</th><th>Pytanie</th><th>Skutek niepowodzenia</th></tr>
+    <tr><td><code>startupProbe</code></td><td>Czy aplikacja już wystartowała?</td><td>wstrzymuje pozostałe probe'y; po limicie – restart</td></tr>
+    <tr><td><code>livenessProbe</code></td><td>Czy proces żyje (nie zawiesił się)?</td><td><b>restart</b> kontenera</td></tr>
+    <tr><td><code>readinessProbe</code></td><td>Czy może przyjmować ruch?</td><td>Pod <b>wypada z Service</b> (bez restartu)</td></tr>
+    <tr><td><code>requests</code></td><td>Ile zarezerwować na węźle?</td><td>scheduler nie znajdzie miejsca → <code>Pending</code></td></tr>
+    <tr><td><code>limits.memory</code></td><td>Ile maksymalnie?</td><td><code>OOMKilled</code></td></tr>
+  </table>
+  <div class="box acc" style="margin-top:3vh">
+    <p><code>maxUnavailable: 0</code> + readiness = <b>zero-downtime deploy</b>: stary Pod znika dopiero, gdy nowy jest Ready.</p>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Uruchamiamy i eksperymentujemy</h2>
+  <div class="cols">
+    <pre><span class="h">kubectl apply -f k8s/00-namespace.yaml</span>
+<span class="h">kubectl apply -f k8s/deployment.yaml</span>
+
+kubectl get deploy,rs,pods -n poke
+kubectl get pods -n poke -w
+kubectl describe pod -n poke \
+  -l app.kubernetes.io/name=poke
+kubectl logs -n poke deploy/poke -f
+kubectl exec -it -n poke deploy/poke -- sh</pre>
+    <pre><span class="c"># samonaprawianie</span>
+kubectl delete pod -n poke \
+  -l app.kubernetes.io/name=poke --wait=false
+
+<span class="c"># skalowanie</span>
+kubectl scale deploy/poke -n poke --replicas=3
+
+<span class="c"># zły obraz -> ImagePullBackOff, stare Pody żyją</span>
+kubectl set image deploy/poke -n poke \
+  poke=poke:nie-istnieje
+kubectl rollout undo deploy/poke -n poke
+kubectl rollout history deploy/poke -n poke</pre>
+  </div>
+  <p class="muted" style="margin-top:2vh">Źródłem prawdy jest YAML w repo – zmiany imperatywne nadpisze kolejne <code>kubectl apply</code>.</p>
+</section>
+
+<!-- ============================ ETAP 3 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 3</span>
+  <div class="big">⚙️</div>
+  <h1>ConfigMap</h1>
+  <p class="muted">branch <code>k8s/03-configmap</code> · <code>k8s/configmap.yaml</code></p>
+</section>
+
+<section class="slide">
+  <h2>Konfiguracja poza obrazem</h2>
+  <div class="cols">
+    <pre><span class="k">apiVersion:</span> v1
+<span class="k">kind:</span> ConfigMap
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke-config
+  <span class="k">namespace:</span> poke
+<span class="k">data:</span>               <span class="c"># sposób 1: zmienne</span>
+  <span class="v">APP_ENVIRONMENT:</span> "kubernetes"
+  <span class="v">APP_WELCOME_MESSAGE:</span> "Pozdrowienia z klastra!"
+  <span class="v">POKEAPI_BASE_URL:</span> "https://pokeapi.co"
+---
+<span class="k">apiVersion:</span> v1
+<span class="k">kind:</span> ConfigMap
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke-config-files
+  <span class="k">namespace:</span> poke
+<span class="k">data:</span>               <span class="c"># sposób 2: plik</span>
+  <span class="v">application-k8s.yaml:</span> |
+    logging:
+      level:
+        pl.org.opi.pokemon: DEBUG</pre>
+    <div>
+      <div class="box">
+        <p><b>Ten sam obraz</b> – różne ConfigMapy dla dev / test / prod (<i>12-factor app</i>).</p>
+      </div>
+      <h3>Spring Boot relaxed binding</h3>
+      <table>
+        <tr><td><code>APP_WELCOME_MESSAGE</code></td><td>→ <code>app.welcome-message</code></td></tr>
+        <tr><td><code>POKEAPI_BASE_URL</code></td><td>→ <code>pokeapi.base-url</code></td></tr>
+      </table>
+      <p class="muted" style="margin-top:2vh">Generowanie YAML:<br><code>kubectl create cm poke-config --from-literal=K=V --dry-run=client -o yaml</code></p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Wpięcie ConfigMap w Deployment</h2>
+  <div class="cols">
+    <pre>      <span class="k">containers:</span>
+        - <span class="k">name:</span> poke
+          <span class="h">envFrom:</span>                <span class="c"># wszystkie klucze</span>
+            - <span class="k">configMapRef:</span>
+                <span class="k">name:</span> poke-config
+          <span class="k">env:</span>
+            - <span class="k">name:</span> SPRING_PROFILES_ACTIVE
+              <span class="k">value:</span> "k8s"
+            - <span class="k">name:</span> SPRING_CONFIG_ADDITIONAL_LOCATION
+              <span class="k">value:</span> "optional:file:/config/"
+          <span class="h">volumeMounts:</span>
+            - { name: config, mountPath: /config, readOnly: true }
+      <span class="h">volumes:</span>
+        - <span class="k">name:</span> config
+          <span class="k">configMap:</span>
+            <span class="k">name:</span> poke-config-files</pre>
+    <div>
+      <pre>kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl exec -n poke deploy/poke -- env \
+  | grep -E 'APP_|SPRING'
+kubectl exec -n poke deploy/poke -- \
+  cat /config/application-k8s.yaml</pre>
+      <div class="box warn" style="margin-top:2vh">
+        <p><b>Zmiana ConfigMap ≠ restart Podów!</b><br>Zmienne czytane są tylko przy starcie:</p>
+        <p><code>kubectl rollout restart deploy/poke -n poke</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ETAP 4 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 4</span>
+  <div class="big">🔐</div>
+  <h1>Secret</h1>
+  <p class="muted">branch <code>k8s/04-secret</code> · <code>k8s/secret.yaml</code></p>
+</section>
+
+<section class="slide">
+  <h2>Secret – dane wrażliwe</h2>
+  <div class="cols">
+    <div>
+      <pre><span class="k">apiVersion:</span> v1
+<span class="k">kind:</span> Secret
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke-secret
+  <span class="k">namespace:</span> poke
+<span class="k">type:</span> Opaque
+<span class="k">stringData:</span>                <span class="c"># zwykły tekst</span>
+  <span class="v">APP_API_TOKEN:</span> "pikachu-demo-token-123"
+<span class="c"># data:                    # base64</span>
+<span class="c">#   APP_API_TOKEN: cGlrYWNodS1kZW1v...</span></pre>
+      <pre style="margin-top:2vh">          <span class="k">env:</span>
+            - <span class="k">name:</span> APP_API_TOKEN
+              <span class="k">valueFrom:</span>
+                <span class="h">secretKeyRef:</span>
+                  <span class="k">name:</span> poke-secret
+                  <span class="k">key:</span> APP_API_TOKEN</pre>
+    </div>
+    <div>
+      <div class="box warn">
+        <p><b>base64 to kodowanie, nie szyfrowanie!</b></p>
+        <pre style="margin-top:1vh">kubectl get secret poke-secret -n poke \
+  -o jsonpath='{.data.APP_API_TOKEN}' \
+  | base64 -d</pre>
+      </div>
+      <h3>Czym Secret różni się od ConfigMap?</h3>
+      <ul>
+        <li>osobne uprawnienia RBAC</li>
+        <li>montowany jako <code>tmpfs</code> (RAM)</li>
+        <li>opcjonalne szyfrowanie w etcd</li>
+        <li>typy: <code>Opaque</code>, <code>tls</code>, <code>dockerconfigjson</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Sekrety w praktyce</h2>
+  <div class="cols">
+    <div>
+      <div class="box warn"><p>❌ Prawdziwe sekrety w repozytorium Git</p></div>
+      <div class="box ok" style="margin-top:2vh">
+        <p>✅ Tworzone poza repo:</p>
+        <pre style="margin-top:1vh">kubectl create secret generic poke-secret \
+  -n poke \
+  --from-literal=APP_API_TOKEN="$(openssl rand -hex 16)" \
+  --dry-run=client -o yaml | kubectl apply -f -</pre>
+      </div>
+      <div class="box ok" style="margin-top:2vh">
+        <p>✅ Narzędzia: Sealed Secrets, External Secrets Operator + Vault / AWS SM, SOPS</p>
+      </div>
+    </div>
+    <div>
+      <h3>Weryfikacja</h3>
+      <pre>kubectl exec -n poke deploy/poke -- \
+  wget -qO- localhost:8080/api/info</pre>
+      <pre style="margin-top:1vh">{
+  "environment": "kubernetes",
+  "welcomeMessage": "Pozdrowienia z klastra…",
+  <span class="v">"apiTokenConfigured": true,</span>
+  <span class="v">"apiTokenMasked": "pi****"</span>
+}</pre>
+      <p class="muted" style="margin-top:1.5vh">Brak Secretu → <code>CreateContainerConfigError</code></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ETAP 5 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 5</span>
+  <div class="big">🔀</div>
+  <h1>Service</h1>
+  <p class="muted">branch <code>k8s/05-service</code> · <code>k8s/service.yaml</code></p>
+</section>
+
+<section class="slide">
+  <h2>Problem: Pody są efemeryczne</h2>
+  <div class="cols">
+    <div>
+      <p>Każdy restart, skalowanie czy deploy = <b>nowy Pod z nowym IP</b>.</p>
+      <p style="margin-top:1.5vh">Service daje:</p>
+      <ul>
+        <li>stałe wirtualne IP (ClusterIP)</li>
+        <li>nazwę DNS: <code>poke</code>, <code>poke.poke.svc.cluster.local</code></li>
+        <li>load balancing na Pody <b>Ready</b></li>
+      </ul>
+      <p style="margin-top:1.5vh">Pody wybierane są po <b>etykietach</b> (<code>selector</code>).</p>
+    </div>
+    <pre class="flow">
+   Service "poke"  10.43.114.126:80
+   DNS: poke.poke.svc.cluster.local
+   selector: app.kubernetes.io/name=poke
+               │
+     ┌─────────┴─────────┐
+     ▼                   ▼
+ Pod 10.42.0.5:8080  Pod 10.42.0.6:8080
+   (Ready)             (Ready)
+
+ kubectl get endpointslices -n poke</pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>service.yaml i typy Service</h2>
+  <div class="cols">
+    <pre><span class="k">apiVersion:</span> v1
+<span class="k">kind:</span> Service
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke
+  <span class="k">namespace:</span> poke
+<span class="k">spec:</span>
+  <span class="k">type:</span> ClusterIP
+  <span class="h">selector:</span>
+    app.kubernetes.io/name: poke
+  <span class="k">ports:</span>
+    - <span class="k">name:</span> http
+      <span class="h">port:</span> 80           <span class="c"># port Service'u</span>
+      <span class="h">targetPort:</span> http   <span class="c"># port kontenera (8080)</span></pre>
+    <table>
+      <tr><th>Typ</th><th>Dostępny</th></tr>
+      <tr><td><code>ClusterIP</code></td><td>tylko wewnątrz klastra (domyślny)</td></tr>
+      <tr><td><code>NodePort</code></td><td>port 30000–32767 na każdym węźle</td></tr>
+      <tr><td><code>LoadBalancer</code></td><td>zewnętrzne IP od chmury / k3s ServiceLB</td></tr>
+      <tr><td><code>ExternalName</code></td><td>alias DNS na zewnętrzną nazwę</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Load balancing w praktyce</h2>
+  <pre>kubectl apply -f k8s/service.yaml
+kubectl get svc,endpointslices -n poke
+
+<span class="h">kubectl run curl -n poke --rm -it --restart=Never --image=curlimages/curl -- \
+  sh -c 'for i in $(seq 1 6); do curl -s http://poke/api/info; echo; done'</span>
+
+<span class="v">"hostname":"poke-66c7f4fc4f-ft5xv"
+"hostname":"poke-66c7f4fc4f-hfkbw"
+"hostname":"poke-66c7f4fc4f-hfkbw"
+"hostname":"poke-66c7f4fc4f-ft5xv"</span></pre>
+  <div class="box acc" style="margin-top:2vh">
+    <p>Eksperyment: <code>kubectl scale deploy/poke -n poke --replicas=4</code> + <code>kubectl get endpointslices -n poke -w</code></p>
+  </div>
+</section>
+
+<!-- ============================ ETAP 6 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 6</span>
+  <div class="big">🔌</div>
+  <h1>Port-forward i testy lokalne</h1>
+  <p class="muted">branch <code>k8s/06-port-forward</code> · <code>scripts/port-forward.sh</code>, <code>scripts/smoke-test.sh</code></p>
+</section>
+
+<section class="slide">
+  <h2>kubectl port-forward</h2>
+  <pre class="flow">
+ przeglądarka ─► localhost:8080 ─► kubectl ─► API server ─► kubelet ─► Pod:8080</pre>
+  <div class="cols" style="margin-top:2vh">
+    <pre><span class="c"># terminal 1</span>
+<span class="h">kubectl port-forward -n poke svc/poke 8080:80</span>
+
+<span class="c"># warianty</span>
+kubectl port-forward -n poke deploy/poke 8080:8080
+kubectl port-forward -n poke pod/&lt;pod&gt; 9000:8080
+
+<span class="c"># terminal 2</span>
+./scripts/smoke-test.sh
+open http://localhost:8080
+open http://localhost:8080/swagger-ui.html</pre>
+    <div>
+      <div class="box warn">
+        <p>Narzędzie <b>deweloperskie</b> – tunel żyje, dopóki działa polecenie. Nie do udostępniania użytkownikom.</p>
+      </div>
+      <div class="box acc" style="margin-top:2vh">
+        <p>Ciekawostka: przez port-forward <code>hostname</code> jest <b>zawsze ten sam</b> – tunel wybiera jeden Pod przy starcie.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Smoke test i debugowanie</h2>
+  <div class="cols">
+    <pre>$ ./scripts/smoke-test.sh
+Testuję http://localhost:8080
+  <span class="v">[OK]</span>   liveness      -> 200
+  <span class="v">[OK]</span>   readiness     -> 200
+  <span class="v">[OK]</span>   frontend      -> 200
+  <span class="v">[OK]</span>   API - pikachu -> 200
+  <span class="v">[OK]</span>   API - lista   -> 200
+  <span class="v">[OK]</span>   API - brak    -> 404
+  <span class="v">[OK]</span>   Swagger UI    -> 302</pre>
+    <div>
+      <h3>Gdy coś nie działa</h3>
+      <pre>kubectl get pods -n poke
+kubectl describe pod &lt;pod&gt; -n poke   <span class="c"># Events!</span>
+kubectl logs &lt;pod&gt; -n poke --previous
+kubectl get events -n poke \
+  --sort-by=.lastTimestamp</pre>
+      <table style="margin-top:1.5vh">
+        <tr><td><code>ImagePullBackOff</code></td><td>zły obraz / brak importu</td></tr>
+        <tr><td><code>CrashLoopBackOff</code></td><td>aplikacja pada – logi</td></tr>
+        <tr><td><code>Pending</code></td><td>brak zasobów na węzłach</td></tr>
+        <tr><td><code>0/1 Running</code></td><td>readiness nie przechodzi</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ETAP 7 ============================ -->
+<section class="slide center">
+  <span class="tag">ETAP 7</span>
+  <div class="big">🌍</div>
+  <h1>Ingress + Traefik</h1>
+  <p class="muted">branch <code>k8s/07-ingress-traefik</code> · <code>k8s/ingress.yaml</code>, <code>k8s/middleware.yaml</code></p>
+</section>
+
+<section class="slide">
+  <h2>Dlaczego Ingress?</h2>
+  <div class="cols">
+    <div>
+      <p><code>Service: LoadBalancer</code> per aplikacja = 1 publiczne IP per aplikacja, brak routingu L7.</p>
+      <h3>Ingress</h3>
+      <ul>
+        <li><b>reguły</b> HTTP: host / ścieżka → Service</li>
+        <li>TLS, nagłówki, przekierowania, rate limit</li>
+        <li>jedno wejście, wiele aplikacji</li>
+      </ul>
+      <h3>Ingress Controller</h3>
+      <p>Program, który realizuje reguły – u nas <b>Traefik</b> (domyślny w k3s/k3d).</p>
+    </div>
+    <pre class="flow">
+ Internet / przeglądarka
+   │ http://poke.localhost:8081
+   ▼
+ k3d loadbalancer :8081
+   ▼
+ Traefik (kube-system) :80
+   │ Ingress: Host = poke.localhost
+   │ Middleware: security-headers
+   ▼
+ Service poke:80
+   ▼
+ Pody poke :8080</pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>ingress.yaml + Middleware</h2>
+  <div class="cols">
+    <pre><span class="k">apiVersion:</span> networking.k8s.io/v1
+<span class="k">kind:</span> Ingress
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke
+  <span class="k">namespace:</span> poke
+  <span class="k">annotations:</span>
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: \
+      poke-security-headers@kubernetescrd
+<span class="k">spec:</span>
+  <span class="h">ingressClassName:</span> traefik
+  <span class="k">rules:</span>
+    - <span class="h">host:</span> poke.localhost
+      <span class="k">http:</span>
+        <span class="k">paths:</span>
+          - <span class="k">path:</span> /
+            <span class="k">pathType:</span> Prefix
+            <span class="k">backend:</span>
+              <span class="k">service:</span>
+                <span class="k">name:</span> poke
+                <span class="k">port:</span> { name: http }
+  <span class="c"># tls: [{ hosts: [poke.example.com], secretName: poke-tls }]</span></pre>
+    <div>
+      <pre><span class="k">apiVersion:</span> traefik.io/v1alpha1
+<span class="k">kind:</span> Middleware
+<span class="k">metadata:</span>
+  <span class="k">name:</span> security-headers
+  <span class="k">namespace:</span> poke
+<span class="k">spec:</span>
+  <span class="k">headers:</span>
+    <span class="k">frameDeny:</span> true
+    <span class="k">contentTypeNosniff:</span> true
+    <span class="k">customResponseHeaders:</span>
+      X-Workshop: "pokedex-k8s"</pre>
+      <pre style="margin-top:1.5vh">kubectl apply -f k8s/middleware.yaml
+kubectl apply -f k8s/ingress.yaml
+curl -i http://poke.localhost:8081/api/info
+BASE_URL=http://poke.localhost:8081 \
+  ./scripts/smoke-test.sh</pre>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Wariant: IngressRoute (CRD Traefika)</h2>
+  <div class="cols">
+    <pre><span class="k">apiVersion:</span> traefik.io/v1alpha1
+<span class="k">kind:</span> IngressRoute
+<span class="k">metadata:</span>
+  <span class="k">name:</span> poke
+  <span class="k">namespace:</span> poke
+<span class="k">spec:</span>
+  <span class="k">entryPoints:</span> [web]
+  <span class="k">routes:</span>
+    - <span class="h">match:</span> Host(`poke.localhost`)
+      <span class="k">kind:</span> Rule
+      <span class="k">middlewares:</span> [{ name: security-headers }]
+      <span class="k">services:</span> [{ name: poke, port: http }]
+    - <span class="h">match:</span> Host(`api.poke.localhost`) && PathPrefix(`/api`)
+      <span class="k">kind:</span> Rule
+      <span class="k">middlewares:</span> [{ name: rate-limit }]
+      <span class="k">services:</span> [{ name: poke, port: http }]
+  <span class="c"># tls: { certResolver: letsencrypt }</span></pre>
+    <div>
+      <table>
+        <tr><th></th><th>Ingress</th><th>IngressRoute</th></tr>
+        <tr><td>Standard</td><td>✅ K8s</td><td>tylko Traefik</td></tr>
+        <tr><td>Przenośność</td><td>✅</td><td>❌</td></tr>
+        <tr><td>Możliwości</td><td>adnotacje</td><td>✅ pełne</td></tr>
+      </table>
+      <p class="muted" style="margin-top:2vh">Plik: <code>k8s/optional/ingressroute-traefik.yaml</code></p>
+      <div class="box" style="margin-top:2vh">
+        <p><b>Produkcja:</b> Service Traefika typu LoadBalancer → publiczne IP → rekord DNS → TLS (cert-manager / Let's Encrypt).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PODSUMOWANIE ============================ -->
+<section class="slide">
+  <h2>Całość – od Dockerfile do świata</h2>
+  <pre class="flow">
+ Dockerfile ──build──► poke:1.0.0 ──import──► klaster
+                                                  │
+   ┌────────────────────── namespace: poke ───────┼──────────────────────────────┐
+   │                                              ▼                              │
+   │  ConfigMap poke-config ──env──►  ┌─ Deployment poke (replicas: 2) ─┐        │
+   │  ConfigMap poke-config-files ─►  │   ReplicaSet                    │        │
+   │  Secret poke-secret ──env──────► │   ├── Pod  ◄─┐                  │        │
+   │                                  │   └── Pod  ◄─┤                  │        │
+   │                                  └──────────────┼──────────────────┘        │
+   │                                                 │ selector                  │
+   │       kubectl port-forward ───────►  Service poke :80 (ClusterIP)           │
+   │                                                 ▲                           │
+   │       Internet ──► Traefik ──► Ingress poke ────┘ (Host: poke.localhost)    │
+   └─────────────────────────────────────────────────────────────────────────────┘
+
+   kubectl apply -f k8s/00-namespace.yaml && kubectl apply -f k8s/</pre>
+</section>
+
+<section class="slide">
+  <h2>Ściąga kubectl</h2>
+  <div class="cols">
+    <pre>kubectl apply -f &lt;plik|katalog&gt;
+kubectl delete -f &lt;plik&gt;
+kubectl get &lt;typ&gt; -n poke [-o wide|yaml]
+kubectl describe &lt;typ&gt; &lt;nazwa&gt; -n poke
+kubectl logs [-f] [--previous] &lt;pod&gt;
+kubectl exec -it &lt;pod&gt; -- sh
+kubectl port-forward svc/poke 8080:80
+kubectl explain deployment.spec.strategy</pre>
+    <pre>kubectl rollout status  deploy/poke
+kubectl rollout restart deploy/poke
+kubectl rollout undo    deploy/poke
+kubectl scale deploy/poke --replicas=3
+kubectl get events --sort-by=.lastTimestamp
+kubectl config set-context --current \
+  --namespace=poke
+kubectl diff -f k8s/   <span class="c"># co zmieni apply?</span></pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Co dalej?</h2>
+  <div class="cols">
+    <ul>
+      <li><b>Kustomize / Helm</b> – jedne manifesty, wiele środowisk</li>
+      <li><b>HorizontalPodAutoscaler</b> – skalowanie po CPU/RAM</li>
+      <li><b>PodDisruptionBudget</b>, anti-affinity – wysoka dostępność</li>
+      <li><b>NetworkPolicy</b> – kto z kim może rozmawiać</li>
+    </ul>
+    <ul>
+      <li><b>cert-manager</b> – automatyczne certyfikaty TLS</li>
+      <li><b>GitOps</b> – Argo CD / Flux</li>
+      <li><b>Observability</b> – Prometheus, Grafana, Loki</li>
+      <li>Rejestr obrazów i <b>CI/CD</b> zamiast <code>image import</code></li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide center">
+  <div class="pokeball">⚪🔴</div>
+  <h1>Dzięki!</h1>
+  <p style="font-size:2vw">Pytania?</p>
+  <p class="muted" style="margin-top:3vh"><code>kubectl delete ns poke</code> · <code>k3d cluster delete workshop</code></p>
+</section>
+
+<div id="progress"></div>
+<div id="counter"></div>
+<div id="hint">← → / spacja · F – pełny ekran · Home/End</div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  let current = 0;
+  function show(i) {
+    current = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((s, idx) => s.classList.toggle('active', idx === current));
+    document.getElementById('progress').style.width = ((current + 1) / slides.length * 100) + '%';
+    document.getElementById('counter').textContent = (current + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (current + 1));
+  }
+  document.addEventListener('keydown', e => {
+    if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(e.key)) { e.preventDefault(); show(current + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(current - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'f' || e.key === 'F') {
+      document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('pre, a, code')) return;
+    show(current + (e.clientX > window.innerWidth / 3 ? 1 : -1));
+  });
+  show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+</script>
+</body>
+</html>
