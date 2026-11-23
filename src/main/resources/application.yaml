@@ -17,3 +17,27 @@ springdoc:
     operations-sorter: alpha
   api-docs:
     path: /v3/api-docs
+
+# --- Konfiguracja nadpisywana przez Kubernetes (ConfigMap / Secret) ---
+# Spring Boot mapuje zmienne środowiskowe automatycznie (relaxed binding):
+#   APP_ENVIRONMENT      -> app.environment
+#   APP_WELCOME_MESSAGE  -> app.welcome-message
+#   APP_API_TOKEN        -> app.api-token
+#   POKEAPI_BASE_URL     -> pokeapi.base-url
+app:
+  environment: local
+  welcome-message: "Witaj w Pokédexie!"
+  api-token: ""
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
