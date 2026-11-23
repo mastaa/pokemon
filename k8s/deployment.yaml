@@ -47,6 +47,12 @@ spec:
               value: "k8s"
             - name: SPRING_CONFIG_ADDITIONAL_LOCATION
               value: "optional:file:/config/"
+            # --- Etap 4: pojedynczy klucz z Secret jako zmienna środowiskowa ---
+            - name: APP_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: poke-secret
+                  key: APP_API_TOKEN
           volumeMounts:
             - name: config
               mountPath: /config
