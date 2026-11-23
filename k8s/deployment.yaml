@@ -36,6 +36,21 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          # --- Etap 3: konfiguracja z ConfigMap ---
+          # wszystkie klucze z ConfigMap poke-config jako zmienne środowiskowe
+          envFrom:
+            - configMapRef:
+                name: poke-config
+          env:
+            # Spring wczyta dodatkowo /config/application-k8s.yaml
+            - name: SPRING_PROFILES_ACTIVE
+              value: "k8s"
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: "optional:file:/config/"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
           # Zasoby: requests = gwarantowane (scheduler), limits = maksimum
           resources:
             requests:
@@ -68,3 +83,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: poke-config-files
+            items:                      # każdy klucz = plik; tu wybieramy jawnie
+              - key: application-k8s.yaml
+                path: application-k8s.yaml

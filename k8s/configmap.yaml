@@ -1,0 +1,33 @@
+# =============================================================================
+# Etap 3: ConfigMap – konfiguracja NIEWRAŻLIWA, oddzielona od obrazu.
+# Ten sam obraz poke:1.0.0 -> różne ConfigMapy dla dev / test / prod.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: poke-config
+  namespace: poke
+  labels:
+    app.kubernetes.io/name: poke
+data:
+  # Sposób 1: pary klucz-wartość -> wstrzykiwane jako zmienne środowiskowe (envFrom).
+  # Spring Boot mapuje APP_WELCOME_MESSAGE -> app.welcome-message (relaxed binding).
+  APP_ENVIRONMENT: "kubernetes"
+  APP_WELCOME_MESSAGE: "Pozdrowienia z klastra Kubernetes!"
+  POKEAPI_BASE_URL: "https://pokeapi.co"
+---
+# Sposób 2: cały plik -> montowany jako wolumen (/config/application-k8s.yaml).
+# Osobna ConfigMapa, żeby klucz-plik nie trafił do zmiennych środowiskowych (envFrom).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: poke-config-files
+  namespace: poke
+  labels:
+    app.kubernetes.io/name: poke
+data:
+  application-k8s.yaml: |
+    logging:
+      level:
+        root: INFO
+        pl.org.opi.pokemon: DEBUG
